@@ -22,26 +22,28 @@ def boolean_string(s):
 
 def get_args_parser(add_help=True):
     parser = argparse.ArgumentParser(description='YOLOv6 PyTorch Evalating', add_help=add_help)
-    parser.add_argument('--data', type=str, default='./data/coco.yaml', help='dataset.yaml path')
-    parser.add_argument('--weights', type=str, default='./weights/yolov6s.pt', help='model.pt path(s)')
-    parser.add_argument('--batch-size', type=int, default=32, help='batch size')
-    parser.add_argument('--img-size', type=int, default=640, help='inference size (pixels)')
+    parser.add_argument('--data', type=str, default='/home/kemove/Documents/YOLOv6/data/coco_defect.yaml', help='dataset.yaml path')
+    # ****
+    parser.add_argument('--weights', type=str, default='/home/kemove/Documents/yolov5_result/v6/train_b8/GELU/exp_n_mix_32group4/weights/best_ckpt.pt', help='model.pt path(s)')
+    parser.add_argument('--batch-size', type=int, default=24, help='batch size')
+    parser.add_argument('--img-size', type=int, default=1024, help='inference size (pixels)')
     parser.add_argument('--conf-thres', type=float, default=0.03, help='confidence threshold')
-    parser.add_argument('--iou-thres', type=float, default=0.65, help='NMS IoU threshold')
-    parser.add_argument('--task', default='val', help='val, test, or speed')
+    parser.add_argument('--iou-thres', type=float, default=0.6, help='NMS IoU threshold')
+    parser.add_argument('--task', default='speed', help='val, test, or speed')
     parser.add_argument('--device', default='0', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
     parser.add_argument('--half', default=False, action='store_true', help='whether to use fp16 infer')
-    parser.add_argument('--save_dir', type=str, default='runs/val/', help='evaluation save dir')
-    parser.add_argument('--name', type=str, default='exp', help='save evaluation results to save_dir/name')
+    # ****
+    parser.add_argument('--save_dir', type=str, default='/home/kemove/Documents/yolov5_result/v6/train_b8/GELU/test', help='evaluation save dir')
+    parser.add_argument('--name', type=str, default='exp_n_1024', help='save evaluation results to save_dir/name')
     parser.add_argument('--shrink_size', type=int, default=0, help='load img resize when test')
     parser.add_argument('--infer_on_rect', default=True, type=boolean_string, help='default to run with rectangle image to boost speed.')
     parser.add_argument('--reproduce_640_eval', default=False, action='store_true', help='whether to reproduce 640 infer result, overwrite some config')
     parser.add_argument('--eval_config_file', type=str, default='./configs/experiment/eval_640_repro.py', help='config file for repro 640 infer result')
     parser.add_argument('--do_coco_metric', default=True, type=boolean_string, help='whether to use pycocotool to metric, set False to close')
-    parser.add_argument('--do_pr_metric', default=False, type=boolean_string, help='whether to calculate precision, recall and F1, n, set False to close')
+    parser.add_argument('--do_pr_metric', default=True, type=boolean_string, help='whether to calculate precision, recall and F1, n, set False to close')
     parser.add_argument('--plot_curve', default=True, type=boolean_string, help='whether to save plots in savedir when do pr metric, set False to close')
-    parser.add_argument('--plot_confusion_matrix', default=False, action='store_true', help='whether to save confusion matrix plots when do pr metric, might cause no harm warning print')
-    parser.add_argument('--verbose', default=False, action='store_true', help='whether to print metric on each class')
+    parser.add_argument('--plot_confusion_matrix', default=True, action='store_true', help='whether to save confusion matrix plots when do pr metric, might cause no harm warning print')
+    parser.add_argument('--verbose', default=True, action='store_true', help='whether to print metric on each class')
     parser.add_argument('--config-file', default='', type=str, help='experiments description file, lower priority than reproduce_640_eval')
     parser.add_argument('--specific-shape', action='store_true', help='rectangular training')
     parser.add_argument('--height', type=int, default=None, help='image height of model input')
@@ -76,6 +78,7 @@ def get_args_parser(add_help=True):
         args.shrink_size = eval_params[eval_model_name]["shrink_size"]
         args.infer_on_rect = eval_params[eval_model_name]["infer_on_rect"]
         #force params
+        #args.img_size = 640
         args.conf_thres = 0.03
         args.iou_thres = 0.65
         args.task = "val"
@@ -137,7 +140,7 @@ def run(data,
     half = device.type != 'cpu' and half
     data = Evaler.reload_dataset(data, task) if isinstance(data, str) else data
 
-    # verify imgsz is gs-multiple
+    # # verify imgsz is gs-multiple
     if specific_shape:
         height = check_img_size(height, 32, floor=256)
         width = check_img_size(width, 32, floor=256)

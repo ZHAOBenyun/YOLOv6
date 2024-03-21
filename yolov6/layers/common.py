@@ -9,11 +9,13 @@ import torch.nn as nn
 import torch.nn.init as init
 from torch.nn.parameter import Parameter
 from yolov6.utils.general import download_ckpt
-
+import math
 
 activation_table = {'relu':nn.ReLU(),
                     'silu':nn.SiLU(),
-                    'hardswish':nn.Hardswish()
+                    'hardswish':nn.Hardswish(),
+                    'mish':nn.Mish(),
+                    'gelu':nn.GELU(),
                     }
 
 class SiLU(nn.Module):
@@ -39,6 +41,7 @@ class ConvModule(nn.Module):
             bias=bias,
         )
         self.bn = nn.BatchNorm2d(out_channels)
+        # self.bn = nn.GroupNorm(num_channels=out_channels, num_groups=4)
         if activation_type is not None:
             self.act = activation_table.get(activation_type)
         self.activation_type = activation_type
@@ -52,6 +55,88 @@ class ConvModule(nn.Module):
         if self.activation_type is None:
             return self.conv(x)
         return self.act(self.conv(x))
+    
+
+class ConvGN(nn.Module):
+    '''A combination of Conv + GN + Activation'''
+    def __init__(self, in_channels, out_channels, kernel_size, stride, activation_type, padding=None, groups=1, bias=False):
+        super().__init__()
+        if padding is None:
+            padding = kernel_size // 2
+        self.conv = nn.Conv2d(
+            in_channels,
+            out_channels,
+            kernel_size=kernel_size,
+            stride=stride,
+            padding=padding,
+            groups=groups,
+            bias=bias,
+        )
+        self.bn = nn.GroupNorm(num_channels=out_channels, num_groups=32)
+        if activation_type is not None:
+            self.act = activation_table.get(activation_type)
+        self.activation_type = activation_type
+
+    def forward(self, x):
+        if self.activation_type is None:
+            return self.bn(self.conv(x))
+        return self.act(self.bn(self.conv(x)))
+
+    def forward_fuse(self, x):
+        if self.activation_type is None:
+            return self.conv(x)
+        return self.act(self.conv(x))
+    
+    
+class ConvGNModule(nn.Module):
+    '''A combination of Conv + GN + Activation'''
+    def __init__(self, in_channels, out_channels, kernel_size, stride, activation_type, padding=None, groups=1, bias=False):
+        super().__init__()
+        if padding is None:
+            padding = kernel_size // 2
+        self.conv = nn.Conv2d(
+            in_channels,
+            out_channels,
+            kernel_size=kernel_size,
+            stride=stride,
+            padding=padding,
+            groups=groups,
+            bias=bias,
+        )
+        self.bn = nn.GroupNorm(num_channels=out_channels, num_groups=32)
+        if activation_type is not None:
+            self.act = activation_table.get(activation_type)
+        self.activation_type = activation_type
+
+    def forward(self, x):
+        if self.activation_type is None:
+            return self.bn(self.conv(x))
+        return self.act(self.bn(self.conv(x)))
+
+    def forward_fuse(self, x):
+        if self.activation_type is None:
+            return self.conv(x)
+        return self.act(self.conv(x))
+
+
+class ConvGNGELU(nn.Module):
+    '''Conv and GN with GELU(Gaussian Error) activation'''
+    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=None, groups=1, bias=False):
+        super().__init__()
+        self.block = ConvGNModule(in_channels, out_channels, kernel_size, stride, 'gelu', padding, groups, bias)
+    
+    def forward(self, x):
+        return self.block(x)
+    
+
+class ConvBNGELU(nn.Module):
+    '''Conv and BN with GELU(Gaussian Error) activation'''
+    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=None, groups=1, bias=False):
+        super().__init__()
+        self.block = ConvModule(in_channels, out_channels, kernel_size, stride, 'gelu', padding, groups, bias)
+    
+    def forward(self, x):
+        return self.block(x)
 
 
 class ConvBNReLU(nn.Module):
@@ -156,6 +241,132 @@ class CSPSPPFModule(nn.Module):
             y2 = self.m(y1)
             y3 = self.cv6(self.cv5(torch.cat([x1, y1, y2, self.m(y2)], 1)))
         return self.cv7(torch.cat((y0, y3), dim=1))
+
+
+class CSPSPPF_group(nn.Module):
+    # Group CSPSPPF (ReLU)
+    def __init__(self, in_channels, out_channels, kernel_size=5, e=0.5, block=ConvBNReLU):
+        super().__init__()
+        c_ = int(out_channels * e)  # hidden channels
+        self.cv1 = block(in_channels, c_, 1, 1, groups=16)
+        self.cv2 = block(in_channels, c_, 1, 1, groups=16)
+        self.cv3 = block(c_, c_, 3, 1, groups=16)
+        self.cv4 = block(c_, c_, 1, 1, groups=16)
+        self.m = nn.MaxPool2d(kernel_size=kernel_size, stride=1, padding=kernel_size // 2)
+        self.cv5 = block(4 * c_, c_, 1, 1, groups=16)
+        self.cv6 = block(c_, c_, 3, 1, groups=16)
+        self.cv7 = block(2 * c_, out_channels, 1, 1, groups=16)
+
+    def forward(self, x):
+        x1 = self.cv4(self.cv3(self.cv1(x)))
+        y0 = self.cv2(x)
+        y1 = self.m(x1)
+        y2 = self.m(y1)
+        y3 = self.cv6(self.cv5(torch.cat([x1, y1, y2, self.m(y2)], 1)))
+        return self.cv7(torch.cat((y0, y3), dim=1))
+
+class MixConv2d(nn.Module):
+    # Mixed Depth-wise Conv https://arxiv.org/abs/1907.09595
+    def __init__(self, c1, c2, k=(1, 3), s=1, equal_ch=True):  # ch_in, ch_out, kernel, stride, ch_strategy
+        super().__init__()
+        n = len(k)  # number of convolutions
+        if equal_ch:  # equal c_ per group
+            i = torch.linspace(0, n - 1E-6, c2).floor()  # c2 indices
+            c_ = [(i == g).sum() for g in range(n)]  # intermediate channels
+        else:  # equal weight.numel() per group
+            b = [c2] + [0] * n
+            a = np.eye(n + 1, n, k=-1)
+            a -= np.roll(a, 1, axis=1)
+            a *= np.array(k) ** 2
+            a[0] = 1
+            c_ = np.linalg.lstsq(a, b, rcond=None)[0].round()  # solve for equal weight indices, ax = b
+
+        self.m = nn.ModuleList([
+            nn.Conv2d(c1, int(c_), k, s, k // 2, groups=math.gcd(c1, int(c_)), bias=False) for k, c_ in zip(k, c_)])
+        # self.bn = nn.BatchNorm2d(c2)
+        self.gn = nn.GroupNorm(num_channels=c2, num_groups=32)
+        self.act = nn.GELU()
+
+    def forward(self, x):
+        # return self.act(self.bn(torch.cat([m(x) for m in self.m], 1)))
+        return self.act(self.gn(torch.cat([m(x) for m in self.m], 1)))
+    
+    
+class CSPSPPF_mix(nn.Module):
+    # Group CSPSPPF + MixConv (SiLU)
+    def __init__(self, c1, c2, k=5, e=0.5, block=MixConv2d):
+        super().__init__()
+        c_ = int(c2 * e)  # hidden channels
+        self.cv1 = block(c1, c_, (1,1,3,3), 1)
+        self.cv2 = block(c1, c_, (1,1,3,3), 1)
+        self.cv3 = block(c_, c_, (1,1,3,3), 1)
+        self.cv4 = block(c_, c_, (1,1,3,3), 1)
+        self.m = nn.MaxPool2d(kernel_size=k, stride=1, padding=k // 2)
+        self.cv5 = block(4 * c_, c_, (1,1,3,3), 1)
+        self.cv6 = block(c_, c_, (1,1,3,3), 1)
+        ### open
+        # self.cv_e = block(c_, c_, (1,3,5,7), 1)
+        self.cv7 = block(2 * c_, c2, (1,1,3,3), 1)
+
+    def forward(self, x):
+        x1 = self.cv4(self.cv3(self.cv1(x)))
+        y0 = self.cv2(x)
+        y1 = self.m(x1)
+        y2 = self.m(y1)
+        # y3 = self.cv6(self.cv5(torch.cat([x1, y1, y2, self.m(y2)], 1)))
+        ### open
+        y3 = self.cv6(self.cv5(torch.cat([x1, y1, y2, self.m(y2)], 1)))
+        return self.cv7(torch.cat((y0, y3), dim=1))
+    
+    
+class GeCSPSPPF_mix(nn.Module):
+    '''CSPSPPF with mix Conv + GELU activation'''
+    def __init__(self, in_channels, out_channels, kernel_size=5, e=0.5, block=MixConv2d):
+        super().__init__()
+        self.cspsppf = CSPSPPF_mix(in_channels, out_channels, kernel_size, e, block)
+
+    def forward(self, x):
+        return self.cspsppf(x)
+
+
+class GeCSPSPPF_group(nn.Module):
+    '''CSPSPPF with group Conv + GELU activation'''
+    def __init__(self, in_channels, out_channels, kernel_size=5, e=0.5, block=ConvBNGELU):
+        super().__init__()
+        self.cspsppf = CSPSPPF_group(in_channels, out_channels, kernel_size, e, block)
+
+    def forward(self, x):
+        return self.cspsppf(x)
+    
+
+class HSCSPSPPF_group(nn.Module):
+    '''CSPSPPF with group Conv + HardSwish activation'''
+    def __init__(self, in_channels, out_channels, kernel_size=5, e=0.5, block=ConvBNGELU):
+        super().__init__()
+        self.cspsppf = CSPSPPF_group(in_channels, out_channels, kernel_size, e, block)
+
+    def forward(self, x):
+        return self.cspsppf(x)
+
+
+class GeCSPSPPF(nn.Module):
+    '''CSPSPPF with GELU activation'''
+    def __init__(self, in_channels, out_channels, kernel_size=5, e=0.5, block=ConvBNGELU):
+        super().__init__()
+        self.cspsppf = CSPSPPFModule(in_channels, out_channels, kernel_size, e, block)
+
+    def forward(self, x):
+        return self.cspsppf(x)
+
+
+class HSCSPSPPF(nn.Module):
+    '''CSPSPPF with HardSwish activation'''
+    def __init__(self, in_channels, out_channels, kernel_size=5, e=0.5, block=ConvBNHS):
+        super().__init__()
+        self.cspsppf = CSPSPPFModule(in_channels, out_channels, kernel_size, e, block)
+
+    def forward(self, x):
+        return self.cspsppf(x)
 
 
 class SimCSPSPPF(nn.Module):

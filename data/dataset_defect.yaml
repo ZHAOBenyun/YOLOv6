@@ -1,0 +1,10 @@
+# Please insure that your custom_dataset are put in same parent dir with YOLOv6_DIR
+train: /home/kemove/Documents/datasets/CUBIT-RGB-v1/images/train2017 # 118287 images
+val:  /home/kemove/Documents/datasets/CUBIT-RGB-v1/images/val2017
+test:  /home/kemove/Documents/datasets/CUBIT-RGB-v1/images/test2017
+
+# whether it is coco dataset, only coco dataset should be set to True.
+is_coco: False
+# Classes
+nc: 3  # number of classes
+names: ['crack', 'spalling', 'moisture']  # class names

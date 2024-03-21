@@ -24,26 +24,26 @@ from yolov6.utils.general import increment_name, find_latest_checkpoint, check_i
 
 def get_args_parser(add_help=True):
     parser = argparse.ArgumentParser(description='YOLOv6 PyTorch Training', add_help=add_help)
-    parser.add_argument('--data-path', default='./data/coco.yaml', type=str, help='path of dataset')
-    parser.add_argument('--conf-file', default='./configs/yolov6n.py', type=str, help='experiments description file')
-    parser.add_argument('--img-size', default=640, type=int, help='train, val image size (pixels)')
+    parser.add_argument('--data-path', default='/home/kemove/Documents/YOLOv6/data/coco_defect.yaml', type=str, help='path of dataset')
+    parser.add_argument('--conf-file', default='/home/kemove/Documents/YOLOv6/configs/yolov6n.py', type=str, help='experiments description file')
+    parser.add_argument('--img-size', default=1024, type=int, help='train, val image size (pixels)')
     parser.add_argument('--rect', action='store_true', help='whether to use rectangular training, default is False')
-    parser.add_argument('--batch-size', default=32, type=int, help='total batch size for all GPUs')
+    parser.add_argument('--batch-size', default=24, type=int, help='total batch size for all GPUs')
     parser.add_argument('--epochs', default=400, type=int, help='number of total epochs to run')
     parser.add_argument('--workers', default=8, type=int, help='number of data loading workers (default: 8)')
-    parser.add_argument('--device', default='0', type=str, help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
-    parser.add_argument('--eval-interval', default=20, type=int, help='evaluate at every interval epochs')
+    parser.add_argument('--device', default='1', type=str, help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
+    parser.add_argument('--eval-interval', default=1, type=int, help='evaluate at every interval epochs')
     parser.add_argument('--eval-final-only', action='store_true', help='only evaluate at the final epoch')
     parser.add_argument('--heavy-eval-range', default=50, type=int,
                         help='evaluating every epoch for last such epochs (can be jointly used with --eval-interval)')
     parser.add_argument('--check-images', action='store_true', help='check images when initializing datasets')
     parser.add_argument('--check-labels', action='store_true', help='check label files when initializing datasets')
-    parser.add_argument('--output-dir', default='./runs/train', type=str, help='path to save outputs')
-    parser.add_argument('--name', default='exp', type=str, help='experiment name, saved to output_dir/name')
+    parser.add_argument('--output-dir', default='/home/kemove/Documents/yolov5_result/v6/train_b8/GELU/', type=str, help='path to save outputs')
+    parser.add_argument('--name', default='exp_n_mix_32group', type=str, help='experiment name, saved to output_dir/name')
     parser.add_argument('--dist_url', default='env://', type=str, help='url used to set up distributed training')
     parser.add_argument('--gpu_count', type=int, default=0)
     parser.add_argument('--local_rank', type=int, default=-1, help='DDP parameter')
-    parser.add_argument('--resume', nargs='?', const=True, default=False, help='resume the most recent training')
+    parser.add_argument('--resume', nargs='?', const=False, default=False, help='resume the most recent training')
     parser.add_argument('--write_trainbatch_tb', action='store_true', help='write train_batch image to tensorboard once an epoch, may slightly slower train speed if open')
     parser.add_argument('--stop_aug_last_n_epoch', default=15, type=int, help='stop strong aug at last n epoch, neg value not stop, default 15')
     parser.add_argument('--save_ckpt_on_last_n_epoch', default=-1, type=int, help='save last n epoch even not best or last, neg value not save')
@@ -58,7 +58,6 @@ def get_args_parser(add_help=True):
     parser.add_argument('--specific-shape', action='store_true', help='rectangular training')
     parser.add_argument('--height', type=int, default=None, help='image height of model input')
     parser.add_argument('--width', type=int, default=None, help='image width of model input')
-    parser.add_argument('--cache-ram', action='store_true', help='whether to cache images into RAM to speed up training')
     return parser
 
 
